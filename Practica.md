@@ -5,33 +5,107 @@ En primer lugar se necesita cierta configuración en el nodo master y los minion
 
 
 ## En el nodo master
-Se necesitan instalar los siguientes paqueres: nfs-common nfs-kernel-server
+Se necesitan instalar los siguientes paqueres: **nfs-common** y  **nfs-kernel-server**.
 ~~~
 sudo apt install nfs-common nfs-kernel-server
 ~~~
-*
-*
-*
-*
-*
-***********sigo por aquí, ya el master hecho, pero lo tengo que explicar. y hacer los nodos y explicarlos
+
+**Como root** se crea el directorio donde se alojará el volumen, con la opción **-p** para crear los directorios padre en el caso que falten:
 ~~~
-debian@kubemaster:~$ sudo apt install nfs-common nfs-kernel-server
-root@kubemaster:/home/debian# mkdir -p /home/shared/volumen7 /home/shared/volumen8
-root@kubemaster:/home/debian# echo "/home/shared/volumen7 *(rw,sync,no_root_squash,no_all_squash)" >> /etc/exports
-root@kubemaster:/home/debian# echo "/home/shared/volumen8 *(rw,sync,no_root_squash,no_all_squash)" >> /etc/exports
-root@kubemaster:/home/debian# rm /lib/systemd/system/nfs-common.service
-root@kubemaster:/home/debian# systemctl daemon-reload
-root@kubemaster:/home/debian# chown -R systemd-coredump:root /home/shared
-root@kubemaster:/home/debian# systemctl restart nfs-kernel-server
+mkdir -p /home/shared/<nombre_directorio>
 ~~~
 
-En los nodos:
+Se añaden las siguientes líneas al direcotrio **/etc/exports**. Este fichero indica todos los directorios que un servidor exporta a los clientes.
+~~~ 
+echo "/home/shared/<nombre_directorio> *(rw,sync,no_root_squash,no_all_squash)" >> /etc/exports
 ~~~
-debian@kubeminion1:~$ sudo apt install -y nfs-common
-root@kubeminion1:/home/debian# rm /lib/systemd/system/nfs-common.service
-root@kubeminion1:/home/debian# systemctl daemon-reload
-root@kubeminion1:/home/debian# mkdir -p /var/data/volumen5 /var/data/volumen6
-root@kubeminion1:/home/debian# mount -t nfs4 10.0.0.3:/home/shared/volumen5 /var/data/volumen5
-root@kubeminion1:/home/debian# mount -t nfs4 10.0.0.3:/home/shared/volumen6 /var/data/volumen6
+
+Contra posibles conflictos se elimina el siguiente demonio de nfs:
 ~~~
+rm /lib/systemd/system/nfs-common.service
+~~~
+
+Se carga la configuración del administrador de systemd:
+~~~
+systemctl daemon-reload
+~~~
+
+Se cambia el propietario de **/home/shared**:
+~~~
+chown -R systemd-coredump:root /home/shared
+~~~
+
+Y se reinicia el servicio:
+~~~
+systemctl restart nfs-kernel-server
+~~~
+
+## En los minions:
+En los nodos que realizan la labor de minions en el cluster se debe instalar el paquete **nfs-common**:
+~~~
+sudo apt install -y nfs-common
+~~~
+
+**Como root** se realizan los siguientes pasos como en el master:
+~~~
+rm /lib/systemd/system/nfs-common.service
+systemctl daemon-reload
+mkdir -p /var/data/<nombre_directorio>
+~~~
+
+Por último, en el direcotrio creado anteriormente, se monta indicando el tipo, **-t**, nfs4 con la dirección IP del nodo master y la ruta del directorio:
+~~~
+mount -t nfs4 <IP_master>:/home/shared/<nombre_directorio> /var/data/<nombre_directorio>
+~~~
+
+## Creación del volúmen en Kubernetes:
+En primer lugar se tiene que crear el objeto. Se va a crear a través de un fichero .yaml con la siguiente estructura:
+~~~
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: <nombre_volumen>
+spec:
+  capacity:
+    storage: <capacidad>Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Recycle
+  nfs:
+    path: <ruta_volúmen>
+    server: <dirección_IP_master>
+~~~
+
+Un ejemplo:
+~~~
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: volumen1
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Recycle
+  nfs:
+    path: /home/shared/volumen1
+    server: 10.0.0.3
+~~~
+
+Para utilizarse hay que crear una solicitud de almacenamiento del volumen, con un fichero con la siguiente estructura:
+~~~
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: <nombre_PVClaim>
+  namespace: <nombre_namespace>
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: <capacidad>Gi
+~~~
+
+
